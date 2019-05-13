@@ -44,7 +44,9 @@ import org.apache.beam.sdk.values.TupleTag;
 import org.apache.beam.vendor.guava.v20_0.com.google.common.collect.Iterables;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.rdd.RDDOperationScope;
 import org.apache.spark.streaming.api.java.JavaStreamingContext;
+import scala.Option;
 
 /**
  * The EvaluationContext allows us to define pipeline instructions and translate between {@code
@@ -99,6 +101,17 @@ public class EvaluationContext {
 
   public void setCurrentTransform(AppliedPTransform<?, ?, ?> transform) {
     this.currentTransform = transform;
+    if (currentTransform != null) {
+      jsc.setLocalProperty(
+          "spark.rdd.scope",
+          new RDDOperationScope(
+                  currentTransform.getFullName(),
+                  Option.empty(),
+                  RDDOperationScope.nextScopeId() + "")
+              .toJson());
+    } else {
+      jsc.setLocalProperty("spark.rdd.scope", null);
+    }
   }
 
   public AppliedPTransform<?, ?, ?> getCurrentTransform() {

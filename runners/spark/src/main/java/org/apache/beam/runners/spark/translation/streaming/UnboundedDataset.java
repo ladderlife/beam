@@ -26,6 +26,7 @@ import org.apache.beam.sdk.coders.Coder;
 import org.apache.beam.sdk.util.WindowedValue;
 import org.apache.spark.storage.StorageLevel;
 import org.apache.spark.streaming.api.java.JavaDStream;
+import org.joda.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -81,6 +82,8 @@ public class UnboundedDataset<T> implements Dataset {
 
   @Override
   public void setName(String name) {
-    // ignore
+    this.dStream =
+        this.dStream.transform(
+            (rdd, t) -> rdd.setName(name + " @ " + new Instant(t.milliseconds())));
   }
 }

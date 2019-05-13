@@ -29,6 +29,7 @@ import org.apache.beam.runners.spark.coders.CoderHelpers;
 import org.apache.beam.runners.spark.io.EmptyCheckpointMark;
 import org.apache.beam.runners.spark.io.MicrobatchSource;
 import org.apache.beam.runners.spark.io.SparkUnboundedSource.Metadata;
+import org.apache.beam.runners.spark.translation.ValueAndCoderLazySerializable;
 import org.apache.beam.sdk.coders.Coder;
 import org.apache.beam.sdk.io.Source;
 import org.apache.beam.sdk.io.UnboundedSource;
@@ -97,17 +98,17 @@ public class StateSpecFunctions {
               Source<T>,
               Option<CheckpointMarkT>,
               State<Tuple2<byte[], Instant>>,
-              Tuple2<Iterable<byte[]>, Metadata>>
+              Tuple2<Iterable<ValueAndCoderLazySerializable<WindowedValue<T>>>, Metadata>>
           mapSourceFunction(final SerializablePipelineOptions options, final String stepName) {
 
     return new SerializableFunction3<
         Source<T>,
         Option<CheckpointMarkT>,
         State<Tuple2<byte[], Instant>>,
-        Tuple2<Iterable<byte[]>, Metadata>>() {
+        Tuple2<Iterable<ValueAndCoderLazySerializable<WindowedValue<T>>>, Metadata>>() {
 
       @Override
-      public Tuple2<Iterable<byte[]>, Metadata> apply(
+      public Tuple2<Iterable<ValueAndCoderLazySerializable<WindowedValue<T>>>, Metadata> apply(
           Source<T> source,
           Option<CheckpointMarkT> startCheckpointMark,
           State<Tuple2<byte[], Instant>> state) {
@@ -159,7 +160,8 @@ public class StateSpecFunctions {
           }
 
           // read microbatch as a serialized collection.
-          final List<byte[]> readValues = new ArrayList<>();
+          final List<ValueAndCoderLazySerializable<WindowedValue<T>>> readValues =
+              new ArrayList<>();
           WindowedValue.FullWindowedValueCoder<T> coder =
               WindowedValue.FullWindowedValueCoder.of(
                   source.getOutputCoder(), GlobalWindow.Coder.INSTANCE);
@@ -173,7 +175,7 @@ public class StateSpecFunctions {
                       microbatchReader.getCurrentTimestamp(),
                       GlobalWindow.INSTANCE,
                       PaneInfo.NO_FIRING);
-              readValues.add(CoderHelpers.toByteArray(wv, coder));
+              readValues.add(ValueAndCoderLazySerializable.of(wv, coder));
               finished = !microbatchReader.advance();
             }
 
@@ -202,11 +204,11 @@ public class StateSpecFunctions {
             throw new RuntimeException("Failed to read from reader.", e);
           }
 
-          final ArrayList<byte[]> payload =
+          final ArrayList<ValueAndCoderLazySerializable<WindowedValue<T>>> payload =
               Lists.newArrayList(Iterators.unmodifiableIterator(readValues.iterator()));
 
           return new Tuple2<>(
-              (Iterable<byte[]>) payload,
+              (Iterable<ValueAndCoderLazySerializable<WindowedValue<T>>>) payload,
               new Metadata(
                   readValues.size(),
                   lowWatermark,

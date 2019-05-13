@@ -116,7 +116,7 @@ public class GlobalWatermarkHolder {
       return getLocalWatermarkCopy();
     } else {
       if (watermarkCache == null) {
-        watermarkCache = createWatermarkCache(cacheInterval);
+        createWatermarkCache(cacheInterval);
       }
       try {
         return watermarkCache.get("SINGLETON");
@@ -130,12 +130,16 @@ public class GlobalWatermarkHolder {
     return driverNodeWatermarks != null;
   }
 
-  private static synchronized LoadingCache<String, Map<Integer, SparkWatermarks>>
-      createWatermarkCache(final Long batchDuration) {
-    return CacheBuilder.newBuilder()
-        // expire watermarks every half batch duration to ensure they update in every batch.
-        .expireAfterWrite(batchDuration / 2, TimeUnit.MILLISECONDS)
-        .build(new WatermarksLoader());
+  private static synchronized void createWatermarkCache(final Long batchDuration) {
+    if (watermarkCache != null) {
+      return;
+    }
+    LOG.info("Watermark cache initialized at {} ms refresh frequency", batchDuration / 2);
+    watermarkCache =
+        CacheBuilder.newBuilder()
+            // expire watermarks every half batch duration to ensure they update in every batch.
+            .expireAfterWrite(batchDuration / 2, TimeUnit.MILLISECONDS)
+            .build(new WatermarksLoader());
   }
 
   /**
@@ -276,6 +280,7 @@ public class GlobalWatermarkHolder {
       // Spark 2 only triggers completion at the end of the iterator.
       while (data.hasNext()) {
         // NO-OP
+        data.next();
       }
       return next;
     } else {

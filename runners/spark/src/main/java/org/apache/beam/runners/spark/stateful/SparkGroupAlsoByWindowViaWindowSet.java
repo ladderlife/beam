@@ -39,6 +39,7 @@ import org.apache.beam.runners.core.triggers.TriggerStateMachines;
 import org.apache.beam.runners.spark.SparkPipelineOptions;
 import org.apache.beam.runners.spark.coders.CoderHelpers;
 import org.apache.beam.runners.spark.translation.TranslationUtils;
+import org.apache.beam.runners.spark.translation.ValueAndCoderLazySerializable;
 import org.apache.beam.runners.spark.util.ByteArray;
 import org.apache.beam.runners.spark.util.GlobalWatermarkHolder;
 import org.apache.beam.sdk.coders.Coder;
@@ -62,7 +63,9 @@ import org.apache.beam.vendor.guava.v20_0.com.google.common.collect.Lists;
 import org.apache.beam.vendor.guava.v20_0.com.google.common.collect.Table;
 import org.apache.spark.api.java.JavaSparkContext$;
 import org.apache.spark.api.java.function.FlatMapFunction;
+import org.apache.spark.rdd.RDD;
 import org.apache.spark.streaming.Duration;
+import org.apache.spark.streaming.Time;
 import org.apache.spark.streaming.api.java.JavaDStream;
 import org.apache.spark.streaming.api.java.JavaPairDStream;
 import org.apache.spark.streaming.dstream.DStream;
@@ -77,6 +80,7 @@ import scala.collection.GenTraversable;
 import scala.collection.Iterator;
 import scala.collection.Seq;
 import scala.runtime.AbstractFunction1;
+import scala.runtime.AbstractFunction2;
 
 /**
  * An implementation of {@link GroupAlsoByWindow} logic for grouping by windows and controlling
@@ -151,26 +155,50 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
           Iterator<
               Tuple3<
                   /*K*/ ByteArray,
-                  Seq</*Itr<WV<I>>*/ byte[]>,
-                  Option<Tuple2<StateAndTimers, /*WV<KV<K, Itr<I>>>*/ List<byte[]>>>>>,
+                  Seq<ValueAndCoderLazySerializable<KV<Long, Iterable<WindowedValue<InputT>>>>>,
+                  Option<
+                      Tuple2<
+                          StateAndTimers, /*WV<KV<K, Itr<I>>>*/
+                          List<
+                              ValueAndCoderLazySerializable<
+                                  WindowedValue<KV<K, Iterable<InputT>>>>>>>>>,
           Iterator<
-              Tuple2</*K*/ ByteArray, Tuple2<StateAndTimers, /*WV<KV<K, Itr<I>>>*/ List<byte[]>>>>>
+              Tuple2<
+                  /*K*/ ByteArray,
+                  Tuple2<
+                      StateAndTimers, /*WV<KV<K, Itr<I>>>*/
+                      List<
+                          ValueAndCoderLazySerializable<WindowedValue<KV<K, Iterable<InputT>>>>>>>>>
       implements Serializable {
 
     private class UpdateStateByKeyOutputIterator
         extends AbstractIterator<
             Tuple2<
                 /*K*/ ByteArray,
-                Tuple2<StateAndTimers, /*WV<KV<K, KV<Long(Time),Itr<I>>>>*/ List<byte[]>>>> {
+                Tuple2<
+                    StateAndTimers, /*WV<KV<K, KV<Long(Time),Itr<I>>>>*/
+                    List<ValueAndCoderLazySerializable<WindowedValue<KV<K, Iterable<InputT>>>>>>>> {
 
       private final Iterator<
-              Tuple3<ByteArray, Seq<byte[]>, Option<Tuple2<StateAndTimers, List<byte[]>>>>>
+              Tuple3<
+                  ByteArray,
+                  Seq<ValueAndCoderLazySerializable<KV<Long, Iterable<WindowedValue<InputT>>>>>,
+                  Option<
+                      Tuple2<
+                          StateAndTimers,
+                          List<
+                              ValueAndCoderLazySerializable<
+                                  WindowedValue<KV<K, Iterable<InputT>>>>>>>>>
           input;
       private final SystemReduceFn<K, InputT, Iterable<InputT>, Iterable<InputT>, W> reduceFn;
       private final CounterCell droppedDueToLateness;
 
       private SparkStateInternals<K> processPreviousState(
-          final Option<Tuple2<StateAndTimers, List<byte[]>>> prevStateAndTimersOpt,
+          final Option<
+                  Tuple2<
+                      StateAndTimers,
+                      List<ValueAndCoderLazySerializable<WindowedValue<KV<K, Iterable<InputT>>>>>>>
+              prevStateAndTimersOpt,
           final K key,
           final SparkTimerInternals timerInternals) {
 
@@ -195,7 +223,15 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
 
       UpdateStateByKeyOutputIterator(
           final Iterator<
-                  Tuple3<ByteArray, Seq<byte[]>, Option<Tuple2<StateAndTimers, List<byte[]>>>>>
+                  Tuple3<
+                      ByteArray,
+                      Seq<ValueAndCoderLazySerializable<KV<Long, Iterable<WindowedValue<InputT>>>>>,
+                      Option<
+                          Tuple2<
+                              StateAndTimers,
+                              List<
+                                  ValueAndCoderLazySerializable<
+                                      WindowedValue<KV<K, Iterable<InputT>>>>>>>>>
               input,
           final SystemReduceFn<K, InputT, Iterable<InputT>, Iterable<InputT>, W> reduceFn,
           final CounterCell droppedDueToLateness) {
@@ -225,19 +261,36 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
       }
 
       @Override
-      protected Tuple2</*K*/ ByteArray, Tuple2<StateAndTimers, /*WV<KV<K, Itr<I>>>*/ List<byte[]>>>
+      protected Tuple2<
+              /*K*/ ByteArray,
+              Tuple2<
+                  StateAndTimers, /*WV<KV<K, Itr<I>>>*/
+                  List<ValueAndCoderLazySerializable<WindowedValue<KV<K, Iterable<InputT>>>>>>>
           computeNext() {
         // input iterator is a Spark partition (~bundle), containing keys and their
         // (possibly) previous-state and (possibly) new data.
         while (input.hasNext()) {
 
           // for each element in the partition:
-          final Tuple3<ByteArray, Seq<byte[]>, Option<Tuple2<StateAndTimers, List<byte[]>>>> next =
-              input.next();
+          final Tuple3<
+                  ByteArray,
+                  Seq<ValueAndCoderLazySerializable<KV<Long, Iterable<WindowedValue<InputT>>>>>,
+                  Option<
+                      Tuple2<
+                          StateAndTimers,
+                          List<
+                              ValueAndCoderLazySerializable<
+                                  WindowedValue<KV<K, Iterable<InputT>>>>>>>>
+              next = input.next();
 
           final ByteArray encodedKey = next._1();
-          final Seq<byte[]> encodedKeyedElements = next._2();
-          final Option<Tuple2<StateAndTimers, List<byte[]>>> prevStateAndTimersOpt = next._3();
+          final Seq<ValueAndCoderLazySerializable<KV<Long, Iterable<WindowedValue<InputT>>>>>
+              encodedKeyedElements = next._2();
+          final Option<
+                  Tuple2<
+                      StateAndTimers,
+                      List<ValueAndCoderLazySerializable<WindowedValue<KV<K, Iterable<InputT>>>>>>>
+              prevStateAndTimersOpt = next._3();
 
           final K key = CoderHelpers.fromByteArray(encodedKey.getValue(), keyCoder);
 
@@ -275,9 +328,14 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
             try {
               // cast to GenTraversable to avoid a ambiguous call to head() which can come from
               // multiple super interfacesof Seq<byte[]>
-              byte[] headBytes = ((GenTraversable<byte[]>) encodedKeyedElements).head();
+              ValueAndCoderLazySerializable<KV<Long, Iterable<WindowedValue<InputT>>>> headBytes =
+                  ((GenTraversable<
+                              ValueAndCoderLazySerializable<
+                                  KV<Long, Iterable<WindowedValue<InputT>>>>>)
+                          encodedKeyedElements)
+                      .head();
               final KV<Long, Iterable<WindowedValue<InputT>>> keyedElements =
-                  CoderHelpers.fromByteArray(headBytes, KvCoder.of(VarLongCoder.of(), itrWvCoder));
+                  headBytes.getOrDecode(KvCoder.of(VarLongCoder.of(), itrWvCoder));
 
               final Long rddTimestamp = keyedElements.getKey();
 
@@ -365,7 +423,8 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
             LOG.trace(logPrefix + ": output elements are {}", Joiner.on(", ").join(outputs));
 
             // persist Spark's state by outputting.
-            final List<byte[]> serOutput = CoderHelpers.toByteArrays(outputs, wvKvIterCoder);
+            final List<ValueAndCoderLazySerializable<WindowedValue<KV<K, Iterable<InputT>>>>>
+                serOutput = CoderHelpers.toLazyValueAndCoders(outputs, wvKvIterCoder);
             return new Tuple2<>(encodedKey, new Tuple2<>(updated, serOutput));
           }
           // an empty state with no output, can be evicted completely - do nothing.
@@ -408,13 +467,24 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
 
     @Override
     public Iterator<
-            Tuple2</*K*/ ByteArray, Tuple2<StateAndTimers, /*WV<KV<K, Itr<I>>>*/ List<byte[]>>>>
+            Tuple2<
+                /*K*/ ByteArray,
+                Tuple2<
+                    StateAndTimers, /*WV<KV<K, Itr<I>>>*/
+                    List<ValueAndCoderLazySerializable<WindowedValue<KV<K, Iterable<InputT>>>>>>>>
         apply(
             final Iterator<
                     Tuple3<
                         /*K*/ ByteArray,
-                        Seq</*Itr<WV<I>>*/ byte[]>,
-                        Option<Tuple2<StateAndTimers, /*WV<KV<K, Itr<I>>>*/ List<byte[]>>>>>
+                        Seq<
+                            ValueAndCoderLazySerializable<
+                                KV<Long, Iterable<WindowedValue<InputT>>>>>,
+                        Option<
+                            Tuple2<
+                                StateAndTimers, /*WV<KV<K, Itr<I>>>*/
+                                List<
+                                    ValueAndCoderLazySerializable<
+                                        WindowedValue<KV<K, Iterable<InputT>>>>>>>>>
                 input) {
       // --- ACTUAL STATEFUL OPERATION:
       //
@@ -476,22 +546,31 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
   }
 
   private static void checkpointIfNeeded(
-      final DStream<Tuple2<ByteArray, Tuple2<StateAndTimers, List<byte[]>>>> firedStream,
-      final SerializablePipelineOptions options) {
+      final DStream<?> firedStream, final SerializablePipelineOptions options) {
 
-    final Long checkpointDurationMillis = getBatchDuration(options);
+    final Long checkpointDurationMillis = getCheckpointDuration(options);
 
     if (checkpointDurationMillis > 0) {
       firedStream.checkpoint(new Duration(checkpointDurationMillis));
     }
   }
 
-  private static Long getBatchDuration(final SerializablePipelineOptions options) {
+  private static Long getCheckpointDuration(final SerializablePipelineOptions options) {
     return options.get().as(SparkPipelineOptions.class).getCheckpointDurationMillis();
   }
 
+  private static Long getBatchDuration(final SerializablePipelineOptions options) {
+    return options.get().as(SparkPipelineOptions.class).getBatchIntervalMillis();
+  }
+
   private static <K, InputT> JavaDStream<WindowedValue<KV<K, Iterable<InputT>>>> stripStateValues(
-      final DStream<Tuple2<ByteArray, Tuple2<StateAndTimers, List<byte[]>>>> firedStream,
+      final DStream<
+              Tuple2<
+                  ByteArray,
+                  Tuple2<
+                      StateAndTimers,
+                      List<ValueAndCoderLazySerializable<WindowedValue<KV<K, Iterable<InputT>>>>>>>>
+          firedStream,
       final Coder<K> keyCoder,
       final FullWindowedValueCoder<InputT> wvCoder) {
 
@@ -508,7 +587,13 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
             t2 -> !t2._2()._2().isEmpty())
         .flatMap(
             new FlatMapFunction<
-                Tuple2</*K*/ ByteArray, Tuple2<StateAndTimers, /*WV<KV<K, Itr<I>>>*/ List<byte[]>>>,
+                Tuple2<
+                    /*K*/ ByteArray,
+                    Tuple2<
+                        StateAndTimers, /*WV<KV<K, Itr<I>>>*/
+                        List<
+                            ValueAndCoderLazySerializable<
+                                WindowedValue<KV<K, Iterable<InputT>>>>>>>,
                 WindowedValue<KV<K, Iterable<InputT>>>>() {
 
               private final FullWindowedValueCoder<KV<K, Iterable<InputT>>>
@@ -520,21 +605,29 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
               public java.util.Iterator<WindowedValue<KV<K, Iterable<InputT>>>> call(
                   final Tuple2<
                           /*K*/ ByteArray,
-                          Tuple2<StateAndTimers, /*WV<KV<K, Itr<I>>>*/ List<byte[]>>>
+                          Tuple2<
+                              StateAndTimers, /*WV<KV<K, Itr<I>>>*/
+                              List<
+                                  ValueAndCoderLazySerializable<
+                                      WindowedValue<KV<K, Iterable<InputT>>>>>>>
                       t2)
                   throws Exception {
                 // drop the state since it is already persisted at this point.
                 // return in serialized form.
-                return CoderHelpers.fromByteArrays(t2._2()._2(), windowedValueKeyValueCoder)
+                return t2._2()._2().stream()
+                    .map(v -> v.getOrDecode(windowedValueKeyValueCoder))
                     .iterator();
               }
             });
   }
 
-  private static <K, InputT> PairDStreamFunctions<ByteArray, byte[]> buildPairDStream(
-      final JavaDStream<WindowedValue<KV<K, Iterable<WindowedValue<InputT>>>>> inputDStream,
-      final Coder<K> keyCoder,
-      final Coder<WindowedValue<InputT>> wvCoder) {
+  private static <K, InputT>
+      PairDStreamFunctions<
+              ByteArray, ValueAndCoderLazySerializable<KV<Long, Iterable<WindowedValue<InputT>>>>>
+          buildPairDStream(
+              final JavaDStream<WindowedValue<KV<K, Iterable<WindowedValue<InputT>>>>> inputDStream,
+              final Coder<K> keyCoder,
+              final Coder<WindowedValue<InputT>> wvCoder) {
 
     // we have to switch to Scala API to avoid Optional in the Java API, see: SPARK-4819.
     // we also have a broader API for Scala (access to the actual key and entire iterator).
@@ -549,26 +642,30 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
     // ---- InputT: I
     // we use mapPartitions with the RDD API because its the only available API
     // that allows to preserve partitioning.
-    final DStream<Tuple2<ByteArray, byte[]>> tupleDStream =
-        inputDStream
-            .transformToPair(
-                (rdd, time) ->
-                    rdd.mapPartitions(
-                            TranslationUtils.functionToFlatMapFunction(WindowedValue::getValue),
-                            true)
-                        .mapPartitionsToPair(TranslationUtils.toPairFlatMapFunction(), true)
-                        .mapValues(
-                            // add the batch timestamp for visibility (e.g., debugging)
-                            values -> KV.of(time.milliseconds(), values))
-                        // move to bytes representation and use coders for deserialization
-                        // because of checkpointing.
-                        .mapPartitionsToPair(
-                            TranslationUtils.pairFunctionToPairFlatMapFunction(
-                                CoderHelpers.toByteFunction(
-                                    keyCoder,
-                                    KvCoder.of(VarLongCoder.of(), IterableCoder.of(wvCoder)))),
-                            true))
-            .dstream();
+    final DStream<
+            Tuple2<
+                ByteArray,
+                ValueAndCoderLazySerializable<KV<Long, Iterable<WindowedValue<InputT>>>>>>
+        tupleDStream =
+            inputDStream
+                .transformToPair(
+                    (rdd, time) ->
+                        rdd.mapPartitions(
+                                TranslationUtils.functionToFlatMapFunction(WindowedValue::getValue),
+                                true)
+                            .mapPartitionsToPair(TranslationUtils.toPairFlatMapFunction(), true)
+                            .mapValues(
+                                // add the batch timestamp for visibility (e.g., debugging)
+                                values -> KV.of(time.milliseconds(), values))
+                            // move to bytes representation and use coders for deserialization
+                            // because of checkpointing.
+                            .mapPartitionsToPair(
+                                TranslationUtils.pairFunctionToPairFlatMapFunction(
+                                    CoderHelpers.toByteArrayLazyValueFunction(
+                                        keyCoder,
+                                        KvCoder.of(VarLongCoder.of(), IterableCoder.of(wvCoder)))),
+                                true))
+                .dstream();
 
     return DStream.toPairDStreamFunctions(
         tupleDStream,
@@ -577,6 +674,21 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
         null);
   }
 
+  private static class AddName<T> extends AbstractFunction2<RDD<T>, Time, RDD<T>>
+      implements Serializable {
+    private String name;
+
+    AddName(String name) {
+      this.name = name;
+    }
+
+    @Override
+    public RDD<T> apply(RDD<T> rdd, Time time) {
+      return rdd.setName(name + " @ " + new Instant(time.milliseconds()));
+    }
+  }
+
+  /** See class comment. */
   public static <K, InputT, W extends BoundedWindow>
       JavaDStream<WindowedValue<KV<K, Iterable<InputT>>>> groupAlsoByWindow(
           final JavaDStream<WindowedValue<KV<K, Iterable<WindowedValue<InputT>>>>> inputDStream,
@@ -587,8 +699,9 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
           final List<Integer> sourceIds,
           final String transformFullName) {
 
-    final PairDStreamFunctions<ByteArray, byte[]> pairDStream =
-        buildPairDStream(inputDStream, keyCoder, wvCoder);
+    final PairDStreamFunctions<
+            ByteArray, ValueAndCoderLazySerializable<KV<Long, Iterable<WindowedValue<InputT>>>>>
+        pairDStream = buildPairDStream(inputDStream, keyCoder, wvCoder);
 
     // use updateStateByKey to scan through the state and update elements and timers.
     final UpdateStateByKeyFunction<K, InputT, W> updateFunc =
@@ -601,13 +714,20 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
             transformFullName);
 
     final DStream<
-            Tuple2</*K*/ ByteArray, Tuple2<StateAndTimers, /*WV<KV<K, Itr<I>>>*/ List<byte[]>>>>
+            Tuple2<
+                ByteArray,
+                Tuple2<
+                    StateAndTimers,
+                    List<ValueAndCoderLazySerializable<WindowedValue<KV<K, Iterable<InputT>>>>>>>>
         firedStream =
-            pairDStream.updateStateByKey(
-                updateFunc,
-                pairDStream.defaultPartitioner(pairDStream.defaultPartitioner$default$1()),
-                true,
-                JavaSparkContext$.MODULE$.fakeClassTag());
+            pairDStream
+                .updateStateByKey(
+                    updateFunc,
+                    pairDStream.defaultPartitioner(pairDStream.defaultPartitioner$default$1()),
+                    true,
+                    JavaSparkContext$.MODULE$.fakeClassTag())
+                .transform(
+                    new AddName<>(transformFullName), JavaSparkContext$.MODULE$.fakeClassTag());
 
     checkpointIfNeeded(firedStream, options);
 

@@ -28,6 +28,7 @@ import org.apache.beam.runners.spark.SparkPipelineOptions;
 import org.apache.beam.runners.spark.coders.CoderHelpers;
 import org.apache.beam.runners.spark.metrics.MetricsAccumulator;
 import org.apache.beam.runners.spark.stateful.StateSpecFunctions;
+import org.apache.beam.runners.spark.translation.ValueAndCoderLazySerializable;
 import org.apache.beam.runners.spark.translation.streaming.UnboundedDataset;
 import org.apache.beam.runners.spark.util.GlobalWatermarkHolder;
 import org.apache.beam.runners.spark.util.GlobalWatermarkHolder.SparkWatermarks;
@@ -79,6 +80,7 @@ import scala.runtime.BoxedUnit;
  */
 public class SparkUnboundedSource {
 
+  /** See class comment. */
   public static <T, CheckpointMarkT extends CheckpointMark> UnboundedDataset<T> read(
       JavaStreamingContext jssc,
       SerializablePipelineOptions rc,
@@ -98,7 +100,10 @@ public class SparkUnboundedSource {
 
     // call mapWithState to read from a checkpointable sources.
     JavaMapWithStateDStream<
-            Source<T>, CheckpointMarkT, Tuple2<byte[], Instant>, Tuple2<Iterable<byte[]>, Metadata>>
+            Source<T>,
+            CheckpointMarkT,
+            Tuple2<byte[], Instant>,
+            Tuple2<Iterable<ValueAndCoderLazySerializable<WindowedValue<T>>>, Metadata>>
         mapWithStateDStream =
             inputDStream.mapWithState(
                 StateSpec.function(
@@ -110,7 +115,7 @@ public class SparkUnboundedSource {
 
     // report the number of input elements for this InputDStream to the InputInfoTracker.
     int id = inputDStream.inputDStream().id();
-    JavaDStream<Metadata> metadataDStream = mapWithStateDStream.map(new Tuple2MetadataFunction());
+    JavaDStream<Metadata> metadataDStream = mapWithStateDStream.map(new Tuple2MetadataFunction<>());
 
     // register ReadReportDStream to report information related to this read.
     new ReadReportDStream(metadataDStream.dstream(), id, getSourceName(source, id), stepName)
@@ -122,8 +127,8 @@ public class SparkUnboundedSource {
             source.getOutputCoder(), GlobalWindow.Coder.INSTANCE);
     JavaDStream<WindowedValue<T>> readUnboundedStream =
         mapWithStateDStream
-            .flatMap(new Tuple2byteFlatMapFunction())
-            .map(CoderHelpers.fromByteFunction(coder));
+            .flatMap(new Tuple2byteFlatMapFunction<>())
+            .map(CoderHelpers.fromLazyValueAndCoderFunction(coder));
     return new UnboundedDataset<>(readUnboundedStream, Collections.singletonList(id));
   }
 
@@ -294,20 +299,23 @@ public class SparkUnboundedSource {
     }
   }
 
-  private static class Tuple2MetadataFunction
-      implements Function<Tuple2<Iterable<byte[]>, Metadata>, Metadata> {
+  private static class Tuple2MetadataFunction<T>
+      implements Function<
+          Tuple2<Iterable<ValueAndCoderLazySerializable<WindowedValue<T>>>, Metadata>, Metadata> {
 
     @Override
-    public Metadata call(Tuple2<Iterable<byte[]>, Metadata> t2) throws Exception {
+    public Metadata call(
+        Tuple2<Iterable<ValueAndCoderLazySerializable<WindowedValue<T>>>, Metadata> t2)
+        throws Exception {
       return t2._2();
     }
   }
 
-  private static class Tuple2byteFlatMapFunction
-      implements FlatMapFunction<Tuple2<Iterable<byte[]>, Metadata>, byte[]> {
+  private static class Tuple2byteFlatMapFunction<T>
+      implements FlatMapFunction<Tuple2<Iterable<T>, Metadata>, T> {
 
     @Override
-    public Iterator<byte[]> call(Tuple2<Iterable<byte[]>, Metadata> t2) throws Exception {
+    public Iterator<T> call(Tuple2<Iterable<T>, Metadata> t2) throws Exception {
       return t2._1().iterator();
     }
   }

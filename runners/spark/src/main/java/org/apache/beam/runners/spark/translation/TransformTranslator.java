@@ -394,7 +394,7 @@ public final class TransformTranslator {
           StorageLevel level = StorageLevel.fromString(context.storageLevel());
           if (canAvoidRddSerialization(level)) {
             // if it is memory only reduce the overhead of moving to bytes
-            all = all.persist(level);
+            all = all.setName(stepName).persist(level);
           } else {
             // Caching can cause Serialization, we need to code to bytes
             // more details in https://issues.apache.org/jira/browse/BEAM-2669
@@ -402,6 +402,7 @@ public final class TransformTranslator {
                 TranslationUtils.getTupleTagCoders(outputs);
             all =
                 all.mapToPair(TranslationUtils.getTupleTagEncodeFunction(coderMap))
+                    .setName(stepName)
                     .persist(level)
                     .mapToPair(TranslationUtils.getTupleTagDecodeFunction(coderMap));
           }
