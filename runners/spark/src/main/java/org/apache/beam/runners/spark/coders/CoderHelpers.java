@@ -147,6 +147,13 @@ public final class CoderHelpers {
         .collect(Collectors.toList());
   }
 
+  public static <T> List<T> fromLazyValueAndCoders(
+      final Iterable<ValueAndCoderLazySerializable<T>> it, final Coder<T> coder) {
+    return StreamSupport.stream(it.spliterator(), false)
+        .map(v -> v.getOrDecode(coder))
+        .collect(Collectors.toList());
+  }
+
   /**
    * A function wrapper for converting an object to a bytearray.
    *

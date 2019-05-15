@@ -29,6 +29,7 @@ import javax.annotation.Nullable;
 import org.apache.beam.runners.core.StateNamespace;
 import org.apache.beam.runners.core.TimerInternals;
 import org.apache.beam.runners.spark.coders.CoderHelpers;
+import org.apache.beam.runners.spark.translation.ValueAndCoderLazySerializable;
 import org.apache.beam.runners.spark.util.GlobalWatermarkHolder.SparkWatermarks;
 import org.apache.beam.sdk.state.TimeDomain;
 import org.apache.beam.sdk.transforms.windowing.BoundedWindow;
@@ -164,14 +165,15 @@ public class SparkTimerInternals implements TimerInternals {
     throw new UnsupportedOperationException("Deleting a timer by ID is not yet supported.");
   }
 
-  public static Collection<byte[]> serializeTimers(
+  public static Collection<ValueAndCoderLazySerializable<TimerData>> serializeTimers(
       Collection<TimerData> timers, TimerDataCoder timerDataCoder) {
-    return CoderHelpers.toByteArrays(timers, timerDataCoder);
+    return CoderHelpers.toLazyValueAndCoders(timers, timerDataCoder);
   }
 
   public static Iterator<TimerData> deserializeTimers(
-      Collection<byte[]> serTimers, TimerDataCoder timerDataCoder) {
-    return CoderHelpers.fromByteArrays(serTimers, timerDataCoder).iterator();
+      Collection<ValueAndCoderLazySerializable<TimerData>> serTimers,
+      TimerDataCoder timerDataCoder) {
+    return CoderHelpers.fromLazyValueAndCoders(serTimers, timerDataCoder).iterator();
   }
 
   @Override

@@ -32,6 +32,8 @@ import org.apache.beam.runners.spark.translation.ValueAndCoderLazySerializable;
 import org.apache.beam.runners.spark.translation.streaming.UnboundedDataset;
 import org.apache.beam.runners.spark.util.GlobalWatermarkHolder;
 import org.apache.beam.runners.spark.util.GlobalWatermarkHolder.SparkWatermarks;
+import org.apache.beam.sdk.coders.Coder;
+import org.apache.beam.sdk.coders.IterableCoder;
 import org.apache.beam.sdk.io.Source;
 import org.apache.beam.sdk.io.UnboundedSource;
 import org.apache.beam.sdk.io.UnboundedSource.CheckpointMark;
@@ -39,10 +41,10 @@ import org.apache.beam.sdk.metrics.Gauge;
 import org.apache.beam.sdk.metrics.Metrics;
 import org.apache.beam.sdk.metrics.MetricsContainer;
 import org.apache.beam.sdk.metrics.MetricsEnvironment;
-import org.apache.beam.sdk.transforms.windowing.BoundedWindow;
 import org.apache.beam.sdk.transforms.windowing.GlobalWindow;
 import org.apache.beam.sdk.util.WindowedValue;
 import org.apache.beam.vendor.guava.v20_0.com.google.common.base.Splitter;
+import org.apache.beam.vendor.guava.v20_0.com.google.common.collect.Ordering;
 import org.apache.spark.Accumulator;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext$;
@@ -103,7 +105,7 @@ public class SparkUnboundedSource {
             Source<T>,
             CheckpointMarkT,
             Tuple2<byte[], Instant>,
-            Tuple2<Iterable<ValueAndCoderLazySerializable<WindowedValue<T>>>, Metadata>>
+            Tuple2<ValueAndCoderLazySerializable<Iterable<WindowedValue<T>>>, Metadata>>
         mapWithStateDStream =
             inputDStream.mapWithState(
                 StateSpec.function(
@@ -122,13 +124,13 @@ public class SparkUnboundedSource {
         .register();
 
     // output the actual (deserialized) stream.
-    WindowedValue.FullWindowedValueCoder<T> coder =
-        WindowedValue.FullWindowedValueCoder.of(
-            source.getOutputCoder(), GlobalWindow.Coder.INSTANCE);
+    Coder<Iterable<WindowedValue<T>>> coder =
+        IterableCoder.of(
+            WindowedValue.FullWindowedValueCoder.of(
+                source.getOutputCoder(), GlobalWindow.Coder.INSTANCE));
     JavaDStream<WindowedValue<T>> readUnboundedStream =
-        mapWithStateDStream
-            .flatMap(new Tuple2byteFlatMapFunction<>())
-            .map(CoderHelpers.fromLazyValueAndCoderFunction(coder));
+        mapWithStateDStream.flatMap(
+            new MapAsFlatMapFunction<>(CoderHelpers.fromLazyValueAndCoderFunction(coder)));
     return new UnboundedDataset<>(readUnboundedStream, Collections.singletonList(id));
   }
 
@@ -199,8 +201,8 @@ public class SparkUnboundedSource {
       final Accumulator<MetricsContainerStepMap> metricsAccum = MetricsAccumulator.getInstance();
       long count = 0;
       SparkWatermarks sparkWatermark = null;
-      Instant globalLowWatermarkForBatch = BoundedWindow.TIMESTAMP_MIN_VALUE;
-      Instant globalHighWatermarkForBatch = BoundedWindow.TIMESTAMP_MIN_VALUE;
+      Instant globalLowWatermarkForBatch = null;
+      Instant globalHighWatermarkForBatch = null;
       long maxReadDuration = 0;
       if (parentRDDOpt.isDefined()) {
         JavaRDD<Metadata> parentRDD = parentRDDOpt.get().toJavaRDD();
@@ -209,14 +211,14 @@ public class SparkUnboundedSource {
           // compute the global input watermark - advance to latest of all partitions.
           Instant partitionLowWatermark = metadata.getLowWatermark();
           globalLowWatermarkForBatch =
-              globalLowWatermarkForBatch.isBefore(partitionLowWatermark)
+              globalLowWatermarkForBatch == null
                   ? partitionLowWatermark
-                  : globalLowWatermarkForBatch;
+                  : Ordering.natural().min(globalLowWatermarkForBatch, partitionLowWatermark);
           Instant partitionHighWatermark = metadata.getHighWatermark();
           globalHighWatermarkForBatch =
-              globalHighWatermarkForBatch.isBefore(partitionHighWatermark)
+              globalHighWatermarkForBatch == null
                   ? partitionHighWatermark
-                  : globalHighWatermarkForBatch;
+                  : Ordering.natural().min(globalHighWatermarkForBatch, partitionHighWatermark);
           // Update metrics reported in the read
           final Gauge gauge = Metrics.gauge(NAMESPACE, READ_DURATION_MILLIS);
           final MetricsContainer container = metadata.getMetricsContainers().getContainer(stepName);
@@ -300,23 +302,25 @@ public class SparkUnboundedSource {
   }
 
   private static class Tuple2MetadataFunction<T>
-      implements Function<
-          Tuple2<Iterable<ValueAndCoderLazySerializable<WindowedValue<T>>>, Metadata>, Metadata> {
+      implements Function<Tuple2<T, Metadata>, Metadata> {
 
     @Override
-    public Metadata call(
-        Tuple2<Iterable<ValueAndCoderLazySerializable<WindowedValue<T>>>, Metadata> t2)
-        throws Exception {
+    public Metadata call(Tuple2<T, Metadata> t2) throws Exception {
       return t2._2();
     }
   }
 
-  private static class Tuple2byteFlatMapFunction<T>
-      implements FlatMapFunction<Tuple2<Iterable<T>, Metadata>, T> {
+  private static class MapAsFlatMapFunction<T, V>
+      implements FlatMapFunction<Tuple2<T, Metadata>, V> {
+    private Function<T, Iterable<V>> map;
+
+    private MapAsFlatMapFunction(Function<T, Iterable<V>> map) {
+      this.map = map;
+    }
 
     @Override
-    public Iterator<T> call(Tuple2<Iterable<T>, Metadata> t2) throws Exception {
-      return t2._1().iterator();
+    public Iterator<V> call(Tuple2<T, Metadata> i) throws Exception {
+      return map.call(i._1()).iterator();
     }
   }
 }

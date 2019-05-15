@@ -24,7 +24,7 @@ import org.apache.beam.runners.core.StateInternals;
 import org.apache.beam.runners.core.StateNamespace;
 import org.apache.beam.runners.core.StateTag;
 import org.apache.beam.runners.core.StateTag.StateBinder;
-import org.apache.beam.runners.spark.coders.CoderHelpers;
+import org.apache.beam.runners.spark.translation.ValueAndCoderLazySerializable;
 import org.apache.beam.sdk.coders.Coder;
 import org.apache.beam.sdk.coders.InstantCoder;
 import org.apache.beam.sdk.coders.ListCoder;
@@ -50,14 +50,15 @@ class SparkStateInternals<K> implements StateInternals {
 
   private final K key;
   // Serializable state for internals (namespace to state tag to coded value).
-  private final Table<String, String, byte[]> stateTable;
+  private final Table<String, String, ValueAndCoderLazySerializable<?>> stateTable;
 
   private SparkStateInternals(K key) {
     this.key = key;
     this.stateTable = HashBasedTable.create();
   }
 
-  private SparkStateInternals(K key, Table<String, String, byte[]> stateTable) {
+  private SparkStateInternals(
+      K key, Table<String, String, ValueAndCoderLazySerializable<?>> stateTable) {
     this.key = key;
     this.stateTable = stateTable;
   }
@@ -67,11 +68,11 @@ class SparkStateInternals<K> implements StateInternals {
   }
 
   static <K> SparkStateInternals<K> forKeyAndState(
-      K key, Table<String, String, byte[]> stateTable) {
+      K key, Table<String, String, ValueAndCoderLazySerializable<?>> stateTable) {
     return new SparkStateInternals<>(key, stateTable);
   }
 
-  public Table<String, String, byte[]> getState() {
+  public Table<String, String, ValueAndCoderLazySerializable<?>> getState() {
     return stateTable;
   }
 
@@ -158,16 +159,17 @@ class SparkStateInternals<K> implements StateInternals {
     }
 
     T readValue() {
-      byte[] buf = stateTable.get(namespace.stringKey(), address.getId());
+      ValueAndCoderLazySerializable<T> buf =
+          (ValueAndCoderLazySerializable<T>) stateTable.get(namespace.stringKey(), address.getId());
       if (buf != null) {
-        return CoderHelpers.fromByteArray(buf, coder);
+        return buf.getOrDecode(coder);
       }
       return null;
     }
 
     void writeValue(T input) {
       stateTable.put(
-          namespace.stringKey(), address.getId(), CoderHelpers.toByteArray(input, coder));
+          namespace.stringKey(), address.getId(), ValueAndCoderLazySerializable.of(input, coder));
     }
 
     public void clear() {

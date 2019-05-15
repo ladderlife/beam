@@ -31,6 +31,7 @@ import org.apache.beam.runners.spark.io.MicrobatchSource;
 import org.apache.beam.runners.spark.io.SparkUnboundedSource.Metadata;
 import org.apache.beam.runners.spark.translation.ValueAndCoderLazySerializable;
 import org.apache.beam.sdk.coders.Coder;
+import org.apache.beam.sdk.coders.IterableCoder;
 import org.apache.beam.sdk.io.Source;
 import org.apache.beam.sdk.io.UnboundedSource;
 import org.apache.beam.sdk.metrics.MetricsContainer;
@@ -41,8 +42,6 @@ import org.apache.beam.sdk.transforms.windowing.PaneInfo;
 import org.apache.beam.sdk.util.WindowedValue;
 import org.apache.beam.vendor.guava.v20_0.com.google.common.base.Optional;
 import org.apache.beam.vendor.guava.v20_0.com.google.common.base.Stopwatch;
-import org.apache.beam.vendor.guava.v20_0.com.google.common.collect.Iterators;
-import org.apache.beam.vendor.guava.v20_0.com.google.common.collect.Lists;
 import org.apache.spark.streaming.State;
 import org.apache.spark.streaming.StateSpec;
 import org.joda.time.Instant;
@@ -98,17 +97,17 @@ public class StateSpecFunctions {
               Source<T>,
               Option<CheckpointMarkT>,
               State<Tuple2<byte[], Instant>>,
-              Tuple2<Iterable<ValueAndCoderLazySerializable<WindowedValue<T>>>, Metadata>>
+              Tuple2<ValueAndCoderLazySerializable<Iterable<WindowedValue<T>>>, Metadata>>
           mapSourceFunction(final SerializablePipelineOptions options, final String stepName) {
 
     return new SerializableFunction3<
         Source<T>,
         Option<CheckpointMarkT>,
         State<Tuple2<byte[], Instant>>,
-        Tuple2<Iterable<ValueAndCoderLazySerializable<WindowedValue<T>>>, Metadata>>() {
+        Tuple2<ValueAndCoderLazySerializable<Iterable<WindowedValue<T>>>, Metadata>>() {
 
       @Override
-      public Tuple2<Iterable<ValueAndCoderLazySerializable<WindowedValue<T>>>, Metadata> apply(
+      public Tuple2<ValueAndCoderLazySerializable<Iterable<WindowedValue<T>>>, Metadata> apply(
           Source<T> source,
           Option<CheckpointMarkT> startCheckpointMark,
           State<Tuple2<byte[], Instant>> state) {
@@ -160,11 +159,11 @@ public class StateSpecFunctions {
           }
 
           // read microbatch as a serialized collection.
-          final List<ValueAndCoderLazySerializable<WindowedValue<T>>> readValues =
-              new ArrayList<>();
-          WindowedValue.FullWindowedValueCoder<T> coder =
-              WindowedValue.FullWindowedValueCoder.of(
-                  source.getOutputCoder(), GlobalWindow.Coder.INSTANCE);
+          final List<WindowedValue<T>> readValues = new ArrayList<>();
+          Coder<Iterable<WindowedValue<T>>> coder =
+              IterableCoder.of(
+                  WindowedValue.FullWindowedValueCoder.of(
+                      source.getOutputCoder(), GlobalWindow.Coder.INSTANCE));
           try {
             // measure how long a read takes per-partition.
             boolean finished = !microbatchReader.start();
@@ -175,7 +174,7 @@ public class StateSpecFunctions {
                       microbatchReader.getCurrentTimestamp(),
                       GlobalWindow.INSTANCE,
                       PaneInfo.NO_FIRING);
-              readValues.add(ValueAndCoderLazySerializable.of(wv, coder));
+              readValues.add(wv);
               finished = !microbatchReader.advance();
             }
 
@@ -204,11 +203,8 @@ public class StateSpecFunctions {
             throw new RuntimeException("Failed to read from reader.", e);
           }
 
-          final ArrayList<ValueAndCoderLazySerializable<WindowedValue<T>>> payload =
-              Lists.newArrayList(Iterators.unmodifiableIterator(readValues.iterator()));
-
           return new Tuple2<>(
-              (Iterable<ValueAndCoderLazySerializable<WindowedValue<T>>>) payload,
+              ValueAndCoderLazySerializable.of((Iterable<WindowedValue<T>>) readValues, coder),
               new Metadata(
                   readValues.size(),
                   lowWatermark,

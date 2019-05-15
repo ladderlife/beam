@@ -103,20 +103,21 @@ public class SparkGroupAlsoByWindowViaWindowSet implements Serializable {
   /** State and Timers wrapper. */
   public static class StateAndTimers implements Serializable {
     // Serializable state for internals (namespace to state tag to coded value).
-    private final Table<String, String, byte[]> state;
-    private final Collection<byte[]> serTimers;
+    private final Table<String, String, ValueAndCoderLazySerializable<?>> state;
+    private final Collection<ValueAndCoderLazySerializable<TimerInternals.TimerData>> serTimers;
 
     private StateAndTimers(
-        final Table<String, String, byte[]> state, final Collection<byte[]> timers) {
+        final Table<String, String, ValueAndCoderLazySerializable<?>> state,
+        final Collection<ValueAndCoderLazySerializable<TimerInternals.TimerData>> timers) {
       this.state = state;
       this.serTimers = timers;
     }
 
-    public Table<String, String, byte[]> getState() {
+    public Table<String, String, ValueAndCoderLazySerializable<?>> getState() {
       return state;
     }
 
-    Collection<byte[]> getTimers() {
+    Collection<ValueAndCoderLazySerializable<TimerInternals.TimerData>> getTimers() {
       return serTimers;
     }
   }
