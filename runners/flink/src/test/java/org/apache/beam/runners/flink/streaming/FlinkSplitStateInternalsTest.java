@@ -17,6 +17,7 @@
  */
 package org.apache.beam.runners.flink.streaming;
 
+import java.util.Collections;
 import org.apache.beam.runners.core.StateInternals;
 import org.apache.beam.runners.core.StateInternalsTest;
 import org.apache.beam.runners.flink.translation.wrappers.streaming.state.FlinkSplitStateInternals;
@@ -41,7 +42,7 @@ public class FlinkSplitStateInternalsTest extends StateInternalsTest {
     MemoryStateBackend backend = new MemoryStateBackend();
     try {
       OperatorStateBackend operatorStateBackend =
-          backend.createOperatorStateBackend(new DummyEnvironment("test", 1, 0), "");
+          backend.createOperatorStateBackend(new DummyEnvironment("test", 1, 0), "", Collections.emptyList(), null);
       return new FlinkSplitStateInternals<>(operatorStateBackend);
     } catch (Exception e) {
       throw new RuntimeException(e);

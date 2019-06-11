@@ -61,6 +61,7 @@ import org.apache.beam.sdk.transforms.Combine;
 import org.apache.beam.sdk.transforms.CombineFnBase.GlobalCombineFn;
 import org.apache.beam.sdk.transforms.DoFn;
 import org.apache.beam.sdk.transforms.PTransform;
+import org.apache.beam.sdk.transforms.Reshuffle;
 import org.apache.beam.sdk.transforms.join.RawUnionValue;
 import org.apache.beam.sdk.transforms.join.UnionCoder;
 import org.apache.beam.sdk.transforms.reflect.DoFnSignature;
@@ -152,6 +153,9 @@ class FlinkStreamingTransformTranslators {
   public static FlinkStreamingPipelineTranslator.StreamTransformTranslator<?> getTranslator(
       PTransform<?, ?> transform) {
     @Nullable String urn = PTransformTranslation.urnForTransformOrNull(transform);
+    if (urn == null && transform instanceof Reshuffle) {
+      urn = PTransformTranslation.RESHUFFLE_URN;
+    }
     return urn == null ? null : TRANSLATORS.get(urn);
   }
 
@@ -1280,7 +1284,6 @@ class FlinkStreamingTransformTranslators {
           OutputT, CheckpointMarkT extends UnboundedSource.CheckpointMark>
       extends RichParallelSourceFunction<WindowedValue<OutputT>>
       implements ProcessingTimeCallback,
-          StoppableFunction,
           CheckpointListener,
           CheckpointedFunction {
 
@@ -1320,11 +1323,6 @@ class FlinkStreamingTransformTranslators {
     @Override
     public void notifyCheckpointComplete(long checkpointId) throws Exception {
       unboundedSourceWrapper.notifyCheckpointComplete(checkpointId);
-    }
-
-    @Override
-    public void stop() {
-      unboundedSourceWrapper.stop();
     }
 
     @Override

@@ -126,6 +126,9 @@ class FlinkBatchTransformTranslators {
   static FlinkBatchPipelineTranslator.BatchTransformTranslator<?> getTranslator(
       PTransform<?, ?> transform) {
     @Nullable String urn = PTransformTranslation.urnForTransformOrNull(transform);
+    if (urn == null && transform instanceof Reshuffle) {
+        urn = PTransformTranslation.RESHUFFLE_URN;
+    }
     return urn == null ? null : TRANSLATORS.get(urn);
   }
 

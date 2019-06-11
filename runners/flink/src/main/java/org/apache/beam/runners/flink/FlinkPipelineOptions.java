@@ -24,9 +24,6 @@ import org.apache.beam.sdk.options.Default;
 import org.apache.beam.sdk.options.Description;
 import org.apache.beam.sdk.options.PipelineOptions;
 import org.apache.beam.sdk.options.StreamingOptions;
-import org.apache.flink.api.common.ExecutionMode;
-import org.apache.flink.runtime.state.StateBackend;
-import org.apache.flink.streaming.api.CheckpointingMode;
 
 /** Options which can be used to configure a Flink PipelineRunner. */
 public interface FlinkPipelineOptions
@@ -90,10 +87,10 @@ public interface FlinkPipelineOptions
   void setCheckpointingInterval(Long interval);
 
   @Description("The checkpointing mode that defines consistency guarantee.")
-  @Default.Enum("EXACTLY_ONCE")
-  CheckpointingMode getCheckpointingMode();
+  @Default.String("EXACTLY_ONCE")
+  String getCheckpointingMode();
 
-  void setCheckpointingMode(CheckpointingMode mode);
+  void setCheckpointingMode(String mode);
 
   @Description(
       "The maximum time in milliseconds that a checkpoint may take before being discarded.")
@@ -148,9 +145,9 @@ public interface FlinkPipelineOptions
       "Sets the state backend to use in streaming mode. "
           + "Otherwise the default is read from the Flink config.")
   @JsonIgnore
-  StateBackend getStateBackend();
+  Object getStateBackend();
 
-  void setStateBackend(StateBackend stateBackend);
+  void setStateBackend(Object stateBackend);
 
   @Description("Enable/disable Beam metrics in Flink Runner")
   @Default.Boolean(true)
@@ -217,10 +214,10 @@ public interface FlinkPipelineOptions
           + "Reference {@link org.apache.flink.api.common.ExecutionMode}. "
           + "Set this to BATCH_FORCED if pipelines get blocked, see "
           + "https://issues.apache.org/jira/browse/FLINK-10672")
-  @Default.Enum(PIPELINED)
-  ExecutionMode getExecutionModeForBatch();
+  @Default.String("PIPELINED")
+  String getExecutionModeForBatch();
 
-  void setExecutionModeForBatch(ExecutionMode executionMode);
+  void setExecutionModeForBatch(String executionMode);
 
   @Description(
       "Savepoint restore path. If specified, restores the streaming pipeline from the provided path.")
