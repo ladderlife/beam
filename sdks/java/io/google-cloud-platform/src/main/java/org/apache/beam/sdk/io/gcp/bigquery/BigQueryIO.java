@@ -1230,6 +1230,9 @@ public class BigQueryIO {
     @Nullable
     abstract Duration getTriggeringFrequency();
 
+    @Nullable
+    abstract Integer getFileTriggeringRecordCount();
+
     abstract Method getMethod();
 
     @Nullable
@@ -1292,6 +1295,8 @@ public class BigQueryIO {
       abstract Builder<T> setMaxBytesPerPartition(long maxBytesPerPartition);
 
       abstract Builder<T> setTriggeringFrequency(Duration triggeringFrequency);
+
+      abstract Builder<T> setFileTriggeringRecordCount(Integer recordCount);
 
       abstract Builder<T> setMethod(Method method);
 
@@ -1569,6 +1574,16 @@ public class BigQueryIO {
     public Write<T> withTriggeringFrequency(Duration triggeringFrequency) {
       checkArgument(triggeringFrequency != null, "triggeringFrequency can not be null");
       return toBuilder().setTriggeringFrequency(triggeringFrequency).build();
+    }
+
+    /**
+     * Control how many records are buffered before being flushed to file shards. Applicable only
+     * when also setting {@link #withTriggeringFrequency}.
+     */
+    @Experimental
+    public Write<T> withFileTriggeringRecordFrequency(int recordCount) {
+      checkArgument(recordCount > 0, "recordCount must be > 0, but was: %s", recordCount);
+      return toBuilder().setFileTriggeringRecordCount(recordCount).build();
     }
 
     /**
@@ -1902,6 +1917,9 @@ public class BigQueryIO {
         }
         batchLoads.setTriggeringFrequency(getTriggeringFrequency());
         batchLoads.setNumFileShards(getNumFileShards());
+        if (getFileTriggeringRecordCount() != null) {
+          batchLoads.setFileTriggeringRecordCount(getFileTriggeringRecordCount());
+        }
         return input.apply(batchLoads);
       }
     }

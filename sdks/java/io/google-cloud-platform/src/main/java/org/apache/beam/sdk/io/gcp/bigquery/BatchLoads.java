@@ -103,9 +103,7 @@ class BatchLoads<DestinationT, ElementT>
 
   static final int DEFAULT_NUM_FILE_SHARDS = 0;
 
-  // If user triggering is supplied, we will trigger the file write after this many records are
-  // written.
-  static final int FILE_TRIGGERING_RECORD_COUNT = 500000;
+  static final int DEFAULT_FILE_TRIGGERING_RECORD_COUNT = 500000;
 
   // The maximum number of retries to poll the status of a job.
   // It sets to {@code Integer.MAX_VALUE} to block until the BigQuery job finishes.
@@ -127,6 +125,9 @@ class BatchLoads<DestinationT, ElementT>
   private int maxFilesPerPartition;
   private long maxBytesPerPartition;
   private int numFileShards;
+  // If user triggering is supplied, we will trigger the file write after this many records are
+  // written.
+  private int fileTriggeringRecordCount;
   private Duration triggeringFrequency;
   private ValueProvider<String> customGcsTempLocation;
   private ValueProvider<String> loadJobProjectId;
@@ -160,6 +161,7 @@ class BatchLoads<DestinationT, ElementT>
     this.numFileShards = DEFAULT_NUM_FILE_SHARDS;
     this.maxFilesPerPartition = DEFAULT_MAX_FILES_PER_PARTITION;
     this.maxBytesPerPartition = DEFAULT_MAX_BYTES_PER_PARTITION;
+    this.fileTriggeringRecordCount = DEFAULT_FILE_TRIGGERING_RECORD_COUNT;
     this.triggeringFrequency = null;
     this.customGcsTempLocation = customGcsTempLocation;
     this.loadJobProjectId = loadJobProjectId;
@@ -197,6 +199,10 @@ class BatchLoads<DestinationT, ElementT>
 
   public void setNumFileShards(int numFileShards) {
     this.numFileShards = numFileShards;
+  }
+
+  public void setFileTriggeringRecordCount(int recordCount) {
+    this.fileTriggeringRecordCount = recordCount;
   }
 
   @VisibleForTesting
@@ -265,7 +271,7 @@ class BatchLoads<DestinationT, ElementT>
                         AfterFirst.of(
                             AfterProcessingTime.pastFirstElementInPane()
                                 .plusDelayOf(triggeringFrequency),
-                            AfterPane.elementCountAtLeast(FILE_TRIGGERING_RECORD_COUNT))))
+                            AfterPane.elementCountAtLeast(fileTriggeringRecordCount))))
                 .discardingFiredPanes());
     PCollection<WriteBundlesToFiles.Result<DestinationT>> results =
         writeShardedFiles(inputInGlobalWindow, tempFilePrefixView);
